@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Threat Modeling Service - Initial Form</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Threat Modeling Service</h1>
+        <div class="form-card">
+            <h2>Let's Get Started</h2>
+            <form method="POST" action="{{ url_for('initial_form') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="form-group">
+                    <label for="email">Your Email</label>
+                    <input type="email" id="email" name="email" required placeholder="example@domain.com">
+                </div>
+                <div class="form-group">
+                    <label for="name">Your Name</label>
+                    <input type="text" id="name" name="name" required placeholder="John Doe">
+                </div>
+                <div class="form-group">
+                    <label for="component">Component to Threat Model</label>
+                    <input type="text" id="component" name="component" required placeholder="e.g., Payment System">
+                </div>
+                <button type="submit" class="submit-btn">Start Threat Modeling</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

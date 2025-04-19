@@ -1,0 +1,7 @@
+all_files_content.txt
+venv
+.vscode
+__pycache__/
+tmp_uploads/
+flask_session/
+sync.sh

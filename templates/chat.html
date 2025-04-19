@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Threat Modeling Service - Chat</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Threat Modeling Service</h1>
+        <div class="model-info">Using AI Model: <span id="model-name">Loading...</span></div>
+        <div class="chat-container">
+            <div class="chat-area">
+                <div id="chat-history" class="chat-history"></div>
+                <div class="chat-input">
+                    <textarea id="message-input" placeholder="Type your message..."></textarea>
+                    <button onclick="sendMessage()" class="chat-btn">Send</button>
+                </div>
+            </div>
+            <div class="attachment-section">
+                <input type="file" id="file-input" accept=".pdf,.png,.jpg,.jpeg">
+                <div id="attachment-list">
+                    <div>MyNarratorAI_Example_Threat_Model_Documentation.pdf <button>Remove</button></div>
+                    <div>c2_diagram.png <button>Remove</button></div>
+                </div>
+            </div>
+            <div class="stage-controls">
+                <button onclick="previousStage()" class="stage-btn">Previous Stage</button>
+                <select id="stage-select" onchange="changeStage()">
+                    <option selected>Spoofing</option>
+                </select>
+                <button onclick="nextStage()" class="stage-btn next">Next Stage</button>
+            </div>
+            <div class="action-buttons">
+                <button id="download-report" style="display: none;" onclick="downloadReport()" class="download-btn">Download Report</button>
+                <button onclick="startNewThreatModel()" class="new-model-btn">Start New Threat Model</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentStage = "";
+        let isPresentationMode = false;
+        const csrfToken = "{{ csrf_token() }}";
+
+        function enterPresentationMode() {
+            isPresentationMode = true;
+            // Disable message input and send button
+            document.getElementById('message-input').disabled = true;
+            document.getElementById('message-input').placeholder = "Session completed";
+            document.querySelector('.chat-btn').disabled = true;
+            // Disable stage controls
+            document.getElementById('stage-select').disabled = true;
+            document.querySelector('.stage-btn').disabled = true; // Previous
+            document.querySelector('.stage-btn.next').disabled = true; // Next
+            // Show download button
+            document.getElementById('download-report').style.display = 'block';
+        }
+
+        function setThinkingMode(isThinking) {
+            const sendButton = document.querySelector('.chat-btn');
+            const prevButton = document.querySelector('.stage-btn');
+            const nextButton = document.querySelector('.stage-btn.next');
+            const messageInput = document.getElementById('message-input');
+            const stageSelect = document.getElementById('stage-select');
+
+            // Disable/enable UI elements
+            if (sendButton) {
+                sendButton.disabled = isThinking;
+                sendButton.style.opacity = isThinking ? '0.5' : '1';
+            }
+            if (prevButton) {
+                prevButton.disabled = isThinking;
+                prevButton.style.opacity = isThinking ? '0.5' : '1';
+            }
+            if (nextButton) {
+                nextButton.disabled = isThinking;
+                nextButton.style.opacity = isThinking ? '0.5' : '1';
+            }
+            if (messageInput) {
+                messageInput.disabled = isThinking;
+                messageInput.style.opacity = isThinking ? '0.7' : '1';
+            }
+            if (stageSelect) {
+                stageSelect.disabled = isThinking;
+                stageSelect.style.opacity = isThinking ? '0.7' : '1';
+            }
+
+            // Manage the overlay
+            const chatArea = document.querySelector('.chat-area');
+            let overlay = document.getElementById('disabled-overlay');
+            if (!overlay && isThinking) {
+                overlay = document.createElement('div');
+                overlay.id = 'disabled-overlay';
+                overlay.className = 'disabled-overlay';
+                chatArea.appendChild(overlay); // Add overlay to .chat-area only
+            }
+            if (overlay) {
+                overlay.classList.toggle('active', isThinking); // Show/hide overlay
+            }
+        }
+        
+        fetch('/api/current_stage')
+            .then(res => res.json())
+            .then(data => {
+                currentStage = data.current_stage;
+                document.getElementById('stage-select').value = currentStage;
+                if (data.presentation_mode) {
+                    enterPresentationMode();
+                }
+            });
+
+        // Load configuration
+        fetch('/api/config')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('model-name').textContent = data.openai_model;
+            });
+
+        // Load chat history
+        fetch('/api/history')
+            .then(res => res.json())
+            .then(data => {
+                const chatHistory = document.getElementById('chat-history');
+                data.history.forEach(msg => {
+                    const msgDiv = document.createElement('div');
+                    msgDiv.className = `message ${msg.sender}`;
+                    msgDiv.textContent = msg.message;
+                    msgDiv.style.whiteSpace = 'pre-wrap';
+                    chatHistory.appendChild(msgDiv);
+                });
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            });
+
+        fetch('/api/get_stages')
+            .then(res => res.json())
+            .then(data => {
+                const stageSelect = document.getElementById('stage-select');
+                stageSelect.innerHTML = '';
+                
+                data.stages.forEach(stage => {
+                    const option = document.createElement('option');
+                    option.value = stage;
+                    option.textContent = stage;
+                    stageSelect.appendChild(option);
+                });
+                stageSelect.value = currentStage;
+            });
+
+        function loadAttachments() {
+            fetch('/api/get_attachments')
+                .then(res => res.json())
+                .then(data => {
+                    const attachmentList = document.getElementById('attachment-list');
+                    attachmentList.innerHTML = '';
+
+                    data.attachments.forEach(att => {
+                        const attDiv = document.createElement('div');
+                        attDiv.className = 'attachment';
+
+                        const filenameText = document.createTextNode(att.filename);
+                        attDiv.appendChild(filenameText);
+
+                        const removeButton = document.createElement('button');
+                        removeButton.textContent = 'Remove';
+
+                        removeButton.addEventListener('click', () => {
+                            deleteAttachment(att.id);
+                        });
+
+                        attDiv.appendChild(removeButton);
+                        attachmentList.appendChild(attDiv);
+                    });                
+                });
+        }
+        loadAttachments();
+
+        document.getElementById('file-input').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const formData = new FormData();
+                formData.append('file', file);
+                fetch('/api/add_attachment', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-CSRFToken': csrfToken
+                    }
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.attachment_id) {
+                        loadAttachments();
+                    } else {
+                        alert(data.error || 'Error uploading file');
+                    }
+                });
+            }
+        });
+
+        function sendMessage() {
+            if (isPresentationMode) return;
+            setThinkingMode(true);
+            const message = document.getElementById('message-input').value;
+            if (message) {
+                const chatHistory = document.getElementById('chat-history');
+                const userMsgDiv = document.createElement('div');
+                userMsgDiv.className = 'message user';
+                userMsgDiv.textContent = message; // Set text directly
+                userMsgDiv.style.whiteSpace = 'pre-wrap'; // Preserve line breaks
+                chatHistory.appendChild(userMsgDiv);
+                
+                document.getElementById('message-input').value = '';
+                
+                const typingDiv = document.createElement('div');
+                typingDiv.className = 'message bot typing';
+                typingDiv.textContent = 'Thinking...';
+                chatHistory.appendChild(typingDiv);
+                
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+                
+                fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                    body: JSON.stringify({ 
+                        message: message,
+                        current_stage: currentStage
+                    })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    setThinkingMode(false);
+                    chatHistory.removeChild(typingDiv);
+                    
+                    if (data.response) {
+                        const botMsgDiv = document.createElement('div');
+                        botMsgDiv.className = 'message bot';
+                        botMsgDiv.textContent = data.response;
+                        chatHistory.appendChild(botMsgDiv); // Assuming this is in your actual code
+                    }
+                    
+                    if (data.new_stage) {
+                        currentStage = data.new_stage;
+                        document.getElementById('stage-select').value = currentStage;
+                    }
+
+                    if (data.presentation_mode) {
+                        enterPresentationMode();
+                    }
+
+                    chatHistory.scrollTop = chatHistory.scrollHeight;
+                }).catch(error => {
+                    setThinkingMode(false);
+                    console.error('Error:', error);
+                });
+            }
+        }
+
+        document.getElementById('message-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        function deleteAttachment(id) {
+            fetch('/api/delete_attachment', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                body: JSON.stringify({ attachment_id: id })
+            })
+            .then(() => loadAttachments());
+        }
+
+        function previousStage() {
+            if (isPresentationMode) return;
+            setThinkingMode(true);
+            
+            const chatHistory = document.getElementById('chat-history');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message bot typing';
+            typingDiv.textContent = 'Thinking...';
+            typingDiv.id = 'stage-change-indicator';
+            chatHistory.appendChild(typingDiv);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+            
+            fetch('/api/previous_stage', { method: 'POST', headers: {'X-CSRFToken': csrfToken } })
+                .then(res => res.json())
+                .then(data => {
+                    const indicator = document.getElementById('stage-change-indicator');
+                    setThinkingMode(false);
+                    if (indicator) chatHistory.removeChild(indicator);
+                    
+                    if (data.status === 'success') {
+                        currentStage = data.new_stage;
+                        document.getElementById('stage-select').value = currentStage;
+                        
+                        const botMsgDiv = document.createElement('div');
+                        botMsgDiv.className = 'message bot';
+                        botMsgDiv.textContent = data.response;        
+                        chatHistory.appendChild(botMsgDiv);            
+                        
+                        if (data.presentation_mode) {
+                            enterPresentationMode();
+                        }
+
+                        chatHistory.scrollTop = chatHistory.scrollHeight;
+                    }
+                }).catch(error => {
+                    setThinkingMode(false);
+                    console.error('Error:', error);
+                });
+        }
+
+        function changeStage() {
+            if (isPresentationMode) return;
+            setThinkingMode(true);
+            const stage = document.getElementById('stage-select').value;
+            if (stage) {
+                const chatHistory = document.getElementById('chat-history');
+                const typingDiv = document.createElement('div');
+                typingDiv.className = 'message bot typing';
+                typingDiv.textContent = 'Thinking...';
+                typingDiv.id = 'stage-change-indicator';
+                chatHistory.appendChild(typingDiv);
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+                
+                fetch('/api/change_stage', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                    body: JSON.stringify({ stage })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    const indicator = document.getElementById('stage-change-indicator');
+                    setThinkingMode(false);
+                    if (indicator) chatHistory.removeChild(indicator);
+                    
+                    if (data.status === 'success') {
+                        currentStage = data.new_stage;
+                        
+                        const botMsgDiv = document.createElement('div');
+                        botMsgDiv.className = 'message bot';
+                        botMsgDiv.textContent = data.response;
+                        chatHistory.appendChild(botMsgDiv);                 
+                        
+                        if (data.presentation_mode) {
+                            enterPresentationMode();
+                        }
+
+                        chatHistory.scrollTop = chatHistory.scrollHeight;
+                    }
+                }).catch(error => {
+                    setThinkingMode(false);
+                    console.error('Error:', error);
+                });
+            }
+        }
+
+        function nextStage() {
+            if (isPresentationMode) return;
+            setThinkingMode(true);
+
+            const chatHistory = document.getElementById('chat-history');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message bot typing';
+            typingDiv.textContent = 'Thinking...';
+            typingDiv.id = 'stage-change-indicator';
+            chatHistory.appendChild(typingDiv);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+            
+            fetch('/api/next_stage', { method: 'POST', headers: {'X-CSRFToken': csrfToken } })
+                .then(res => res.json())
+                .then(data => {
+                    const indicator = document.getElementById('stage-change-indicator');
+                    setThinkingMode(false);
+                    if (indicator) chatHistory.removeChild(indicator);
+                    
+                    if (data.status === 'success') {
+                        currentStage = data.new_stage;
+                        document.getElementById('stage-select').value = currentStage;
+                        
+                        const botMsgDiv = document.createElement('div');
+                        botMsgDiv.className = 'message bot';
+                        botMsgDiv.textContent = data.response;
+                        chatHistory.appendChild(botMsgDiv);
+                        
+                        if (data.presentation_mode) {
+                            enterPresentationMode();
+                        }
+
+                        chatHistory.scrollTop = chatHistory.scrollHeight;
+                    }
+                }).catch(error => {
+                    setThinkingMode(false);
+                    console.error('Error:', error);
+                });
+        }
+
+        function downloadReport() {
+            window.location.href = '/api/download_report';
+        }
+
+        function startNewThreatModel() {
+            if (confirm('Are you sure you want to start a new threat model? This will clear your current session.')) {
+                fetch('/api/clear_session', { method: 'POST', headers: {'X-CSRFToken': csrfToken } })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            location.href = '/initial_form.html';
+                        } else {
+                            alert('Error clearing session');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        location.href = '/initial_form.html'; // Redirect anyway on error
+                    });
+            }
+        }
+    </script>
+</body>
+</html>
